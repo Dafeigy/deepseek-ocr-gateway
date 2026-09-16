@@ -1,0 +1,10 @@
+model_list:
+  - model_name: deepseek-ocr
+    litellm_params:
+      model: mistral/mistral-ocr-latest
+      api_base: http://ocr-adapter:8000/v1
+      api_key: os.environ/OCR_ADAPTER_API_KEY
+      max_parallel_requests: 8
+    model_info:
+      mode: ocr
+
