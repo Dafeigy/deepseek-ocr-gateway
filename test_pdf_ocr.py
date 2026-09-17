@@ -12,7 +12,7 @@ import base64
 import json
 import os
 from pathlib import Path
-
+import time
 import httpx
 
 
@@ -22,8 +22,8 @@ def parse_args() -> argparse.Namespace:
         "pdf",
         nargs="?",
         type=Path,
-        default=Path("test.pdf"),
-        help="PDF file to recognize (default: test.pdf)",
+        default=Path("风机盘管机组_GB-T-19232-2019.pdf"),
+        help="PDF file to recognize (default: 风机盘管机组_GB-T-19232-2019.pdf)",
     )
     parser.add_argument(
         "--url",
@@ -64,7 +64,8 @@ def build_payload(pdf_path: Path, pages: str | None) -> dict[str, object]:
             "document_url": f"data:application/pdf;base64,{encoded_pdf}",
         },
         "include_blocks": True,         # 开启block
-        "include_image_base64": True    # 保存图片信息
+        "include_image_base64": True,    # 保存图片信息
+        # "pages": "51"
     }
     if pages is not None:
         payload["pages"] = pages
@@ -87,6 +88,7 @@ def main() -> int:
 
     print(f"正在提交：{pdf_path}")
     print(f"OCR 接口：{args.url}")
+    st = time.time()
     try:
         with httpx.Client(timeout=args.timeout) as client:
             response = client.post(args.url, headers=headers, json=build_payload(pdf_path, args.pages))
@@ -98,21 +100,25 @@ def main() -> int:
     try:
         result = response.json()
     except ValueError:
+        print(f"{time.time() - st:.2f} 秒后收到响应，但无法解析为 JSON。")
         print(f"服务返回了非 JSON 内容（HTTP {response.status_code}）：{response.text[:500]}")
         return 1
 
     if response.is_error:
+        print(f"{time.time() - st:.2f} 秒后收到响应，但 OCR 失败（HTTP {response.status_code}）：")
         print(f"OCR 失败（HTTP {response.status_code}）：")
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 1
 
     args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     pages_result = result.get("pages", [])
+    print(f"{time.time() - st:.2f} 秒后收到响应。")
     print(f"OCR 成功，共识别 {len(pages_result)} 页。")
     for page in pages_result:
         print(f"\n===== 第 {page.get('index', '?')} 页 =====")
         print(page.get("markdown", ""))
     print(f"\n完整结果已保存到：{args.output.resolve()}")
+    print(f"{time.time() - st:.2f} 秒后收到响应。")
     return 0
 
 
