@@ -7,11 +7,13 @@
 - PDF：本地按页渲染，每页一次上游 OCR 请求。
 - 同一 PDF 默认最多并发两页。
 - 所有文档共享全局上游并发、RPM 和 TPM 限制。
-- 只提供逐页 Markdown，不伪造 block、bbox、confidence 等能力。
+- 提供逐页 Markdown，并将 DeepSeek grounding 信息转换成 Mistral `blocks` 像素坐标。
+- 检测到图像区域时返回 `images`；`include_image_base64=true` 时附带裁剪图 data URI。
 - 上游返回 `finish_reason=length` 时明确报错，不静默返回截断内容。
 
-为兼容 LiteLLM/Mistral SDK，服务会宽松接收 `include_blocks`、annotation、confidence
-等高级请求字段，但不会执行这些功能；响应只保证 `pages[].markdown`、页面尺寸和基础 usage。
+为兼容 LiteLLM/Mistral SDK，服务会接收 annotation、confidence 等高级请求字段，但当前不执行
+annotation 和 confidence。响应提供 `pages[].markdown`、`blocks`、`images`、页面尺寸和基础 usage。
+DeepSeek 坐标以 0–999 表示，服务会按照渲染后页面尺寸换算成 Mistral 使用的像素坐标。
 
 ## 运行
 

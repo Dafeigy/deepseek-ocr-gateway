@@ -41,12 +41,34 @@ class OCRPageDimensions(BaseModel):
     width: int | None = None
 
 
+class OCRImageObject(BaseModel):
+    id: str
+    top_left_x: int
+    top_left_y: int
+    bottom_right_x: int
+    bottom_right_y: int
+    image_base64: str | None = None
+
+
+class OCRBlock(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    type: str
+    top_left_x: int
+    top_left_y: int
+    bottom_right_x: int
+    bottom_right_y: int
+    content: str
+    image_id: str | None = None
+
+
 class OCRPage(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     index: int
     markdown: str
-    images: list[Any] | None = None
+    images: list[OCRImageObject] = Field(default_factory=list)
+    blocks: list[OCRBlock] | None = None
     dimensions: OCRPageDimensions | None = None
 
 

@@ -63,6 +63,8 @@ def build_payload(pdf_path: Path, pages: str | None) -> dict[str, object]:
             "type": "document_url",
             "document_url": f"data:application/pdf;base64,{encoded_pdf}",
         },
+        "include_blocks": True,         # 开启block
+        "include_image_base64": True    # 保存图片信息
     }
     if pages is not None:
         payload["pages"] = pages

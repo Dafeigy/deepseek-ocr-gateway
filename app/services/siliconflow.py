@@ -1,3 +1,4 @@
+import ast
 import asyncio
 import base64
 import random
@@ -13,9 +14,40 @@ from app.core.config import Settings
 from app.core.errors import ServiceError
 from app.core.rate_limit import AdaptiveSlidingWindowLimiter
 
-_GROUNDING_METADATA = re.compile(r"<\|ref\|>.*?<\|/ref\|>\s*<\|det\|>.*?<\|/det\|>", re.DOTALL)
+_GROUNDING_METADATA = re.compile(
+    r"<\|ref\|>(?P<label>.*?)<\|/ref\|>\s*<\|det\|>(?P<coordinates>.*?)<\|/det\|>",
+    re.DOTALL,
+)
 _EOS_MARKERS = ("<｜end▁of▁sentence｜>", "<|end_of_sentence|>")
 _SAFE_CONTEXT_FALLBACK_TOKENS = 4096
+_BLOCK_TYPE_ALIASES = {
+    "text": "text",
+    "title": "title",
+    "heading": "title",
+    "list": "list",
+    "table": "table",
+    "image": "image",
+    "figure": "image",
+    "equation": "equation",
+    "formula": "equation",
+    "caption": "caption",
+    "figure_caption": "caption",
+    "table_caption": "caption",
+    "code": "code",
+    "reference": "references",
+    "references": "references",
+    "aside_text": "aside_text",
+    "header": "header",
+    "footer": "footer",
+    "signature": "signature",
+}
+
+
+@dataclass(frozen=True, slots=True)
+class GroundingBlock:
+    block_type: str
+    content: str
+    boxes: tuple[tuple[int, int, int, int], ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,6 +55,7 @@ class OCRTextResult:
     text: str
     total_tokens: int | None
     trace_id: str | None
+    grounding_blocks: tuple[GroundingBlock, ...] = ()
 
 
 class SiliconFlowClient:
@@ -64,6 +97,46 @@ class SiliconFlowClient:
         cleaned = cleaned.replace("\\coloneqq", ":=").replace("\\eqqcolon", "=:")
         cleaned = re.sub(r"\n{4,}", "\n\n", cleaned)
         return cleaned.strip()
+
+    @classmethod
+    def _parse_output(cls, text: str) -> tuple[str, tuple[GroundingBlock, ...]]:
+        matches = list(_GROUNDING_METADATA.finditer(text))
+        blocks: list[GroundingBlock] = []
+        for index, match in enumerate(matches):
+            label = match.group("label").strip()
+            normalized_label = re.sub(r"[\s-]+", "_", label.lower())
+            block_type = _BLOCK_TYPE_ALIASES.get(normalized_label, "text")
+            segment_end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+            content = text[match.end() : segment_end]
+            for marker in _EOS_MARKERS:
+                content = content.replace(marker, "")
+            content = content.strip()
+            if not content and normalized_label not in _BLOCK_TYPE_ALIASES:
+                content = label
+            boxes = cls._parse_boxes(match.group("coordinates"))
+            if boxes:
+                blocks.append(GroundingBlock(block_type=block_type, content=content, boxes=boxes))
+        return cls._clean_output(text), tuple(blocks)
+
+    @staticmethod
+    def _parse_boxes(value: str) -> tuple[tuple[int, int, int, int], ...]:
+        try:
+            parsed = ast.literal_eval(value)
+        except (SyntaxError, ValueError):
+            return ()
+        if not isinstance(parsed, (list, tuple)):
+            return ()
+        boxes: list[tuple[int, int, int, int]] = []
+        for candidate in parsed:
+            if not isinstance(candidate, (list, tuple)) or len(candidate) != 4:
+                continue
+            if any(isinstance(item, bool) or not isinstance(item, (int, float)) for item in candidate):
+                continue
+            x1, y1, x2, y2 = (round(item) for item in candidate)
+            if not (0 <= x1 < x2 <= 999 and 0 <= y1 < y2 <= 999):
+                continue
+            boxes.append((x1, y1, x2, y2))
+        return tuple(boxes)
 
     @staticmethod
     def _retry_after(response: httpx.Response | None) -> float | None:
@@ -172,10 +245,12 @@ class SiliconFlowClient:
                     content = (choice.get("message") or {}).get("content")
                     if not isinstance(content, str) or not content.strip():
                         raise ServiceError(502, "empty_ocr_output", "SiliconFlow returned empty OCR content")
+                    text, grounding_blocks = self._parse_output(content)
                     return OCRTextResult(
-                        text=self._clean_output(content),
+                        text=text,
                         total_tokens=total_tokens,
                         trace_id=response.headers.get("x-siliconcloud-trace-id"),
+                        grounding_blocks=grounding_blocks,
                     )
                 except ServiceError:
                     raise
